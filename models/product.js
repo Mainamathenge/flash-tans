@@ -1,75 +1,24 @@
-const { pool } = require('../config/database');
+const mongoose = require('mongoose');
 const { v4: uuidv4 } = require('uuid');
 
-class Product {
-  static async getAll() {
-    try {
-      const [rows] = await pool.execute('SELECT * FROM products ORDER BY created_at DESC');
-      return rows;
-    } catch (error) {
-      throw error;
-    }
-  }
+const productSchema = new mongoose.Schema({
+  _id: { type: String, default: uuidv4 },
+  name: { type: String, required: true },
+  price: { type: Number, required: true },
+  description: String,
+  image: { type: String, default: '/images/placeholder.jpg' },
+  stock: { type: Number, default: 0 }
+}, {
+  timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' },
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
+});
 
-  static async getById(id) {
-    try {
-      const [rows] = await pool.execute('SELECT * FROM products WHERE id = ?', [id]);
-      return rows[0] || null;
-    } catch (error) {
-      throw error;
-    }
-  }
+// Virtual for id to match existing API expectations if needed
+productSchema.virtual('id').get(function () {
+  return this._id;
+});
 
-  static async create(productData) {
-    try {
-      const id = uuidv4();
-      const { name, price, description, stock } = productData;
-      
-      await pool.execute(
-        'INSERT INTO products (id, name, price, description, stock) VALUES (?, ?, ?, ?, ?)',
-        [id, name, parseFloat(price), description, parseInt(stock)]
-      );
-      
-      return await this.getById(id);
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  static async update(id, productData) {
-    try {
-      const { name, price, description, stock } = productData;
-      
-      await pool.execute(
-        'UPDATE products SET name = ?, price = ?, description = ?, stock = ? WHERE id = ?',
-        [name, parseFloat(price), description, parseInt(stock), id]
-      );
-      
-      return await this.getById(id);
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  static async delete(id) {
-    try {
-      const [result] = await pool.execute('DELETE FROM products WHERE id = ?', [id]);
-      return result.affectedRows > 0;
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  static async updateStock(id, quantity) {
-    try {
-      await pool.execute(
-        'UPDATE products SET stock = stock - ? WHERE id = ?',
-        [quantity, id]
-      );
-    } catch (error) {
-      throw error;
-    }
-  }
-}
+const Product = mongoose.model('Product', productSchema);
 
 module.exports = Product;

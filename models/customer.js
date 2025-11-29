@@ -1,31 +1,21 @@
-const { pool } = require('../config/database');
+const mongoose = require('mongoose');
 const { v4: uuidv4 } = require('uuid');
 
-class Customer {
-  static async create(customerData) {
-    try {
-      const id = uuidv4();
-      const { name, email, address } = customerData;
-      
-      await pool.execute(
-        'INSERT INTO customers (id, name, email, address) VALUES (?, ?, ?, ?)',
-        [id, name, email, address]
-      );
-      
-      return id;
-    } catch (error) {
-      throw error;
-    }
-  }
+const customerSchema = new mongoose.Schema({
+  _id: { type: String, default: uuidv4 },
+  name: { type: String, required: true },
+  email: { type: String, required: true },
+  address: String
+}, {
+  timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' },
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
+});
 
-  static async getById(id) {
-    try {
-      const [rows] = await pool.execute('SELECT * FROM customers WHERE id = ?', [id]);
-      return rows[0] || null;
-    } catch (error) {
-      throw error;
-    }
-  }
-}
+customerSchema.virtual('id').get(function () {
+  return this._id;
+});
+
+const Customer = mongoose.model('Customer', customerSchema);
 
 module.exports = Customer;

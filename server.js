@@ -2,6 +2,7 @@ const express = require('express');
 const expressLayouts = require('express-ejs-layouts');
 const bodyParser = require('body-parser');
 const path = require('path');
+const mongoose = require('mongoose');
 require('dotenv').config();
 
 const { initDatabase } = require('./config/database');
@@ -30,7 +31,7 @@ initDatabase();
 // Routes
 app.get('/', async (req, res) => {
   try {
-    const products = await Product.getAll();
+    const products = await Product.find().sort({ created_at: -1 });
     res.render('index', { products });
   } catch (error) {
     console.error('Error fetching products:', error);
@@ -40,8 +41,23 @@ app.get('/', async (req, res) => {
 
 app.get('/admin', async (req, res) => {
   try {
-    const products = await Product.getAll();
-    const orders = await Order.getAll();
+    const products = await Product.find().sort({ created_at: -1 });
+    const ordersRaw = await Order.find().populate('customer_id').sort({ created_at: -1 });
+
+    // Map orders to match view expectation (flatten customer info)
+    const orders = ordersRaw.map(order => {
+      const orderObj = order.toObject();
+      if (order.customer_id) {
+        orderObj.customer_name = order.customer_id.name;
+        orderObj.customer_email = order.customer_id.email;
+        orderObj.customer_address = order.customer_id.address;
+      } else {
+        orderObj.customer_name = 'Unknown';
+        orderObj.customer_email = 'Unknown';
+      }
+      return orderObj;
+    });
+
     res.render('admin', { products, orders });
   } catch (error) {
     console.error('Error loading admin data:', error);
@@ -56,7 +72,7 @@ app.get('/cart', (req, res) => {
 // API Routes
 app.get('/api/products', async (req, res) => {
   try {
-    const products = await Product.getAll();
+    const products = await Product.find().sort({ created_at: -1 });
     res.json(products);
   } catch (error) {
     console.error('Error fetching products:', error);
@@ -67,7 +83,7 @@ app.get('/api/products', async (req, res) => {
 app.post('/api/products', async (req, res) => {
   try {
     const { name, price, description, stock } = req.body;
-    
+
     if (!name || !price || !description || stock === undefined) {
       return res.status(400).json({ error: 'All fields are required' });
     }
@@ -83,10 +99,14 @@ app.post('/api/products', async (req, res) => {
 app.delete('/api/products/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const deleted = await Product.delete(id);
-    
+    const deleted = await Product.findByIdAndDelete(id);
+
     if (!deleted) {
-      return res.status(404).json({ error: 'Product not found' });
+      // Try finding by custom id if _id failed (though we use uuid as _id)
+      const deletedByCustomId = await Product.findOneAndDelete({ id: id });
+      if (!deletedByCustomId) {
+        return res.status(404).json({ error: 'Product not found' });
+      }
     }
 
     res.json({ message: 'Product deleted successfully' });
@@ -97,9 +117,12 @@ app.delete('/api/products/:id', async (req, res) => {
 });
 
 app.post('/api/orders', async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const { items, customerInfo } = req.body;
-    
+
     if (!items || !items.length || !customerInfo) {
       return res.status(400).json({ error: 'Items and customer info are required' });
     }
@@ -109,39 +132,54 @@ app.post('/api/orders', async (req, res) => {
     const orderItems = [];
 
     for (const item of items) {
-      const product = await Product.getById(item.productId);
+      const product = await Product.findById(item.productId).session(session);
       if (!product) {
+        await session.abortTransaction();
+        session.endSession();
         return res.status(404).json({ error: `Product ${item.productId} not found` });
       }
-      
+
       if (product.stock < item.quantity) {
+        await session.abortTransaction();
+        session.endSession();
         return res.status(400).json({ error: `Insufficient stock for ${product.name}` });
       }
 
       const itemTotal = product.price * item.quantity;
       total += itemTotal;
-      
+
       orderItems.push({
-        productId: product.id,
-        productName: product.name,
+        product_id: product._id,
+        product_name: product.name,
         price: product.price,
         quantity: item.quantity,
         subtotal: itemTotal
       });
+
+      // Update stock
+      product.stock -= item.quantity;
+      await product.save({ session });
     }
 
     // Create customer
-    const customerId = await Customer.create(customerInfo);
+    const customer = new Customer(customerInfo);
+    await customer.save({ session });
 
     // Create order
-    const newOrder = await Order.create({
-      customerId,
+    const order = new Order({
+      customer_id: customer._id,
       total,
       items: orderItems
     });
+    await order.save({ session });
 
-    res.status(201).json(newOrder);
+    await session.commitTransaction();
+    session.endSession();
+
+    res.status(201).json(order);
   } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
     console.error('Error creating order:', error);
     res.status(500).json({ error: 'Failed to create order' });
   }
@@ -149,7 +187,7 @@ app.post('/api/orders', async (req, res) => {
 
 app.get('/api/orders', async (req, res) => {
   try {
-    const orders = await Order.getAll();
+    const orders = await Order.find().populate('customer_id').sort({ created_at: -1 });
     res.json(orders);
   } catch (error) {
     console.error('Error fetching orders:', error);

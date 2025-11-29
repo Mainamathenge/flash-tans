@@ -3,6 +3,11 @@ FROM node:18-alpine
 WORKDIR /app
 
 # Install dependencies
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Install dependencies
 COPY package*.json ./
 RUN npm install
 
@@ -10,7 +15,7 @@ RUN npm install
 COPY . .
 
 # Expose port
-EXPOSE 
+EXPOSE 3000
 
-# Wait for MySQL and start the application
+# Start the application
 CMD ["npm", "start"]
