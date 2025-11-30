@@ -9,7 +9,7 @@ terraform {
 }
 
 # --- VARIABLES ---
-variable "image_name" { default = "Ubuntu-24.04-CLI" }
+variable "image_name" { default = "Ubuntu-24.04" }
 
 # RECOMMENDED: Use a flavor with at least 4GB RAM (e.g., m1.medium)
 # Your host has 32GB RAM, so you can afford 4GB-8GB per VM.
