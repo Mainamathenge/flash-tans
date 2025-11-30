@@ -21,8 +21,7 @@ app.use(express.static('public'));
 // View engine setup
 console.error('Error fetching products:', error);
 res.status(500).render('error', { message: 'Failed to load products' });
-  }
-});
+
 
 app.get('/admin', async (req, res) => {
   try {
