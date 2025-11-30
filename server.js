@@ -19,23 +19,8 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static('public'));
 
 // View engine setup
-app.set('view engine', 'ejs');
-app.set('views', path.join(__dirname, 'views'));
-app.use(expressLayouts);
-app.set('layout', 'layout');
-
-
-// Initialize database
-initDatabase();
-
-// Routes
-app.get('/', async (req, res) => {
-  try {
-    const products = await Product.find().sort({ created_at: -1 });
-    res.render('index', { products });
-  } catch (error) {
-    console.error('Error fetching products:', error);
-    res.status(500).render('error', { message: 'Failed to load products' });
+console.error('Error fetching products:', error);
+res.status(500).render('error', { message: 'Failed to load products' });
   }
 });
 
