@@ -13,47 +13,28 @@ const Order = require('./models/order');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
 app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.urlencoded({ extended: false }));
+app.use(expressLayouts);
+app.set("view engine", "ejs");
+app.set("views", path.join(__dirname, "views"));
 app.use(express.static('public'));
 
-// View engine setup
-console.error('Error fetching products:', error);
-res.status(500).render('error', { message: 'Failed to load products' });
+initDatabase();
 
+// Prometheus Metrics
+const client = require('prom-client');
+const collectDefaultMetrics = client.collectDefaultMetrics;
+collectDefaultMetrics();
 
-app.get('/admin', async (req, res) => {
-  try {
-    const products = await Product.find().sort({ created_at: -1 });
-    const ordersRaw = await Order.find().populate('customer_id').sort({ created_at: -1 });
-
-    // Map orders to match view expectation (flatten customer info)
-    const orders = ordersRaw.map(order => {
-      const orderObj = order.toObject();
-      if (order.customer_id) {
-        orderObj.customer_name = order.customer_id.name;
-        orderObj.customer_email = order.customer_id.email;
-        orderObj.customer_address = order.customer_id.address;
-      } else {
-        orderObj.customer_name = 'Unknown';
-        orderObj.customer_email = 'Unknown';
-      }
-      return orderObj;
-    });
-
-    res.render('admin', { products, orders });
-  } catch (error) {
-    console.error('Error loading admin data:', error);
-    res.status(500).render('error', { message: 'Failed to load admin data' });
-  }
+const httpRequestDurationMicroseconds = new client.Histogram({
+  name: 'http_request_duration_ms',
+  help: 'Duration of HTTP requests in ms',
+  labelNames: ['method', 'route', 'code'],
+  buckets: [0.1, 5, 15, 50, 100, 500]
 });
 
-app.get('/cart', (req, res) => {
-  res.render('cart');
-});
-
-// API Routes
+// ================= API: GET PRODUCTS =================
 app.get('/api/products', async (req, res) => {
   try {
     const products = await Product.find().sort({ created_at: -1 });
@@ -64,6 +45,7 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
+// ================= API: CREATE PRODUCT ===============
 app.post('/api/products', async (req, res) => {
   try {
     const { name, price, description, stock } = req.body;
@@ -80,13 +62,13 @@ app.post('/api/products', async (req, res) => {
   }
 });
 
+// ================= API: DELETE PRODUCT ===============
 app.delete('/api/products/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const deleted = await Product.findByIdAndDelete(id);
 
     if (!deleted) {
-      // Try finding by custom id if _id failed (though we use uuid as _id)
       const deletedByCustomId = await Product.findOneAndDelete({ id: id });
       if (!deletedByCustomId) {
         return res.status(404).json({ error: 'Product not found' });
@@ -100,6 +82,7 @@ app.delete('/api/products/:id', async (req, res) => {
   }
 });
 
+// ================= API: CREATE ORDER =================
 app.post('/api/orders', async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -111,7 +94,6 @@ app.post('/api/orders', async (req, res) => {
       return res.status(400).json({ error: 'Items and customer info are required' });
     }
 
-    // Verify products and calculate total
     let total = 0;
     const orderItems = [];
 
@@ -140,16 +122,13 @@ app.post('/api/orders', async (req, res) => {
         subtotal: itemTotal
       });
 
-      // Update stock
       product.stock -= item.quantity;
       await product.save({ session });
     }
 
-    // Create customer
     const customer = new Customer(customerInfo);
     await customer.save({ session });
 
-    // Create order
     const order = new Order({
       customer_id: customer._id,
       total,
@@ -169,6 +148,7 @@ app.post('/api/orders', async (req, res) => {
   }
 });
 
+// ================= API: GET ORDERS ===================
 app.get('/api/orders', async (req, res) => {
   try {
     const orders = await Order.find().populate('customer_id').sort({ created_at: -1 });
@@ -179,17 +159,18 @@ app.get('/api/orders', async (req, res) => {
   }
 });
 
-// Error handling middleware
+// ================== ERROR HANDLING ===================
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).render('error', { message: 'Something went wrong!' });
 });
 
-// 404 handler
+// ================== 404 HANDLER =====================
 app.use((req, res) => {
   res.status(404).render('error', { message: 'Page not found' });
 });
 
+// ================= START SERVER =====================
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Flash Tans server running on 0.0.0.0:${PORT}`);
 });
