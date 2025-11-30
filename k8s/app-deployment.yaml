@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: flash-tans
-          image: flash-tans-app:latest
+          image: josephmaina/flash-tans-app:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
