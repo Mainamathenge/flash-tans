@@ -37,7 +37,7 @@ spec:
               mountPath: /data/db
       containers:
         - name: mongodb
-          image: mongo:5.0
+          image: mongo:4.4
           command:
             - mongod
             - "--replSet"
