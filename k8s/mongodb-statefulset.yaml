@@ -28,6 +28,13 @@ spec:
         app: mongodb
     spec:
       terminationGracePeriodSeconds: 10
+      initContainers:
+        - name: init-permissions
+          image: busybox
+          command: ['sh', '-c', 'mkdir -p /data/db && chown -R 999:999 /data/db']
+          volumeMounts:
+            - name: mongodb-data
+              mountPath: /data/db
       containers:
         - name: mongodb
           image: mongo:5.0
