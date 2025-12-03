@@ -34,6 +34,38 @@ const httpRequestDurationMicroseconds = new client.Histogram({
   buckets: [0.1, 5, 15, 50, 100, 500]
 });
 
+// ================= METRICS ENDPOINT ==================
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', client.register.contentType);
+  res.end(await client.register.metrics());
+});
+
+// ================= VIEW ROUTES =======================
+app.get('/', async (req, res) => {
+  try {
+    const products = await Product.find().sort({ created_at: -1 });
+    res.render('index', { title: 'Flash Tans - Home', products });
+  } catch (error) {
+    console.error('Error loading home page:', error);
+    res.render('index', { title: 'Flash Tans - Home', products: [] });
+  }
+});
+
+app.get('/admin', async (req, res) => {
+  try {
+    const products = await Product.find().sort({ created_at: -1 });
+    const orders = await Order.find().populate('customer_id').sort({ created_at: -1 });
+    res.render('admin', { title: 'Flash Tans - Admin', products, orders });
+  } catch (error) {
+    console.error('Error loading admin page:', error);
+    res.render('admin', { title: 'Flash Tans - Admin', products: [], orders: [] });
+  }
+});
+
+app.get('/cart', (req, res) => {
+  res.render('cart', { title: 'Flash Tans - Cart' });
+});
+
 // ================= API: GET PRODUCTS =================
 app.get('/api/products', async (req, res) => {
   try {

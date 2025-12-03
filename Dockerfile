@@ -1,7 +1,3 @@
-FROM node:18-alpine
-
-WORKDIR /app
-
 # Install dependencies
 FROM node:18-alpine
 
