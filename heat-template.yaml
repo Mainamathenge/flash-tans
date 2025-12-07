@@ -1,0 +1,303 @@
+heat_template_version: 2021-04-16
+
+description: >
+  OpenStack Heat template for deploying a 3-node Kubernetes cluster
+  with 1 master and 2 worker nodes for Flash Tans application.
+
+parameters:
+  image_name:
+    type: string
+    description: Name of the Ubuntu image to use
+    default: Ubuntu-24.04
+
+  flavor_name:
+    type: string
+    description: Flavor for the instances (at least 4GB RAM recommended)
+    default: ds4G
+
+  key_pair:
+    type: string
+    description: Name of the SSH key pair
+    default: flashtans-key
+
+  public_network:
+    type: string
+    description: Name of the external public network
+    default: public
+
+  admin_ip:
+    type: string
+    description: Your public IP address for SSH access (CIDR format)
+    default: 0.0.0.0/32
+
+  authorized_network:
+    type: string
+    description: Authorized network CIDR for NodePort access
+    default: 0.0.0.0/0
+
+  master_name:
+    type: string
+    description: Name for the master node
+    default: k8s-master-Joseph
+
+  worker1_name:
+    type: string
+    description: Name for worker node 1
+    default: k8s-worker-1-Bertin
+
+  worker2_name:
+    type: string
+    description: Name for worker node 2
+    default: k8s-worker-2-Tatenda
+
+resources:
+  # Network
+  k8s_network:
+    type: OS::Neutron::Net
+    properties:
+      name: k8s-project-network
+      admin_state_up: true
+
+  # Subnet
+  k8s_subnet:
+    type: OS::Neutron::Subnet
+    properties:
+      name: k8s-project-subnet
+      network: { get_resource: k8s_network }
+      cidr: 192.168.20.0/24
+      ip_version: 4
+      dns_nameservers:
+        - 8.8.8.8
+        - 1.1.1.1
+
+  # Router
+  k8s_router:
+    type: OS::Neutron::Router
+    properties:
+      name: k8s-project-router
+      admin_state_up: true
+      external_gateway_info:
+        network: { get_param: public_network }
+
+  # Router Interface
+  k8s_router_interface:
+    type: OS::Neutron::RouterInterface
+    properties:
+      router: { get_resource: k8s_router }
+      subnet: { get_resource: k8s_subnet }
+
+  # Security Group
+  k8s_security_group:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      name: k8s_security_group
+      description: Kubernetes cluster security group with least-privilege access
+      rules:
+        # SSH - Restricted to admin IP
+        - direction: ingress
+          ethertype: IPv4
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+          remote_ip_prefix: { get_param: admin_ip }
+          description: SSH access from admin IP only
+        
+        # HTTP
+        - direction: ingress
+          ethertype: IPv4
+          protocol: tcp
+          port_range_min: 80
+          port_range_max: 80
+          remote_ip_prefix: 0.0.0.0/0
+          description: HTTP web traffic
+        
+        # HTTPS
+        - direction: ingress
+          ethertype: IPv4
+          protocol: tcp
+          port_range_min: 443
+          port_range_max: 443
+          remote_ip_prefix: 0.0.0.0/0
+          description: HTTPS secure web traffic
+        
+        # Kubernetes API - Cluster internal only
+        - direction: ingress
+          ethertype: IPv4
+          protocol: tcp
+          port_range_min: 6443
+          port_range_max: 6443
+          remote_mode: remote_group_id
+          description: Kubernetes API - cluster internal only
+        
+        # NodePort range - Restricted to authorized network
+        - direction: ingress
+          ethertype: IPv4
+          protocol: tcp
+          port_range_min: 30000
+          port_range_max: 32767
+          remote_ip_prefix: { get_param: authorized_network }
+          description: NodePort access from authorized network
+        
+        # ICMP (Ping)
+        - direction: ingress
+          ethertype: IPv4
+          protocol: icmp
+          remote_ip_prefix: 0.0.0.0/0
+          description: ICMP for network diagnostics
+        
+        # Flannel VXLAN - Cluster internal only
+        - direction: ingress
+          ethertype: IPv4
+          protocol: udp
+          port_range_min: 8472
+          port_range_max: 8472
+          remote_mode: remote_group_id
+          description: Flannel VXLAN overlay network
+        
+        # Kubelet API - Cluster internal only
+        - direction: ingress
+          ethertype: IPv4
+          protocol: tcp
+          port_range_min: 10250
+          port_range_max: 10250
+          remote_mode: remote_group_id
+          description: Kubelet API - cluster internal only
+        
+        # etcd - Cluster internal only
+        - direction: ingress
+          ethertype: IPv4
+          protocol: tcp
+          port_range_min: 2379
+          port_range_max: 2380
+          remote_mode: remote_group_id
+          description: etcd server client API
+
+  # User data script for swap configuration
+  swap_config:
+    type: OS::Heat::CloudConfig
+    properties:
+      cloud_config:
+        write_files:
+          - path: /tmp/setup-swap.sh
+            permissions: '0755'
+            content: |
+              #!/bin/bash
+              fallocate -l 4G /swapfile
+              chmod 600 /swapfile
+              mkswap /swapfile
+              swapon /swapfile
+              echo '/swapfile none swap sw 0 0' >> /etc/fstab
+              sysctl vm.swappiness=10
+              echo 'vm.swappiness=10' >> /etc/sysctl.conf
+        runcmd:
+          - /tmp/setup-swap.sh
+
+  # Master Node
+  master_instance:
+    type: OS::Nova::Server
+    properties:
+      name: { get_param: master_name }
+      image: { get_param: image_name }
+      flavor: { get_param: flavor_name }
+      key_name: { get_param: key_pair }
+      networks:
+        - network: { get_resource: k8s_network }
+      security_groups:
+        - { get_resource: k8s_security_group }
+        - default
+      user_data_format: RAW
+      user_data: { get_resource: swap_config }
+
+  # Worker 1
+  worker1_instance:
+    type: OS::Nova::Server
+    properties:
+      name: { get_param: worker1_name }
+      image: { get_param: image_name }
+      flavor: { get_param: flavor_name }
+      key_name: { get_param: key_pair }
+      networks:
+        - network: { get_resource: k8s_network }
+      security_groups:
+        - { get_resource: k8s_security_group }
+        - default
+      user_data_format: RAW
+      user_data: { get_resource: swap_config }
+
+  # Worker 2
+  worker2_instance:
+    type: OS::Nova::Server
+    properties:
+      name: { get_param: worker2_name }
+      image: { get_param: image_name }
+      flavor: { get_param: flavor_name }
+      key_name: { get_param: key_pair }
+      networks:
+        - network: { get_resource: k8s_network }
+      security_groups:
+        - { get_resource: k8s_security_group }
+        - default
+      user_data_format: RAW
+      user_data: { get_resource: swap_config }
+
+  # Floating IPs
+  master_floating_ip:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network: { get_param: public_network }
+
+  worker1_floating_ip:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network: { get_param: public_network }
+
+  worker2_floating_ip:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network: { get_param: public_network }
+
+  # Floating IP Associations
+  master_floating_ip_association:
+    type: OS::Neutron::FloatingIPAssociation
+    properties:
+      floatingip_id: { get_resource: master_floating_ip }
+      port_id: { get_attr: [master_instance, addresses, { get_resource: k8s_network }, 0, port] }
+
+  worker1_floating_ip_association:
+    type: OS::Neutron::FloatingIPAssociation
+    properties:
+      floatingip_id: { get_resource: worker1_floating_ip }
+      port_id: { get_attr: [worker1_instance, addresses, { get_resource: k8s_network }, 0, port] }
+
+  worker2_floating_ip_association:
+    type: OS::Neutron::FloatingIPAssociation
+    properties:
+      floatingip_id: { get_resource: worker2_floating_ip }
+      port_id: { get_attr: [worker2_instance, addresses, { get_resource: k8s_network }, 0, port] }
+
+outputs:
+  master_floating_ip:
+    description: Floating IP address of master node
+    value: { get_attr: [master_floating_ip, floating_ip_address] }
+
+  worker1_floating_ip:
+    description: Floating IP address of worker 1
+    value: { get_attr: [worker1_floating_ip, floating_ip_address] }
+
+  worker2_floating_ip:
+    description: Floating IP address of worker 2
+    value: { get_attr: [worker2_floating_ip, floating_ip_address] }
+
+  all_floating_ips:
+    description: All floating IP addresses
+    value:
+      master: { get_attr: [master_floating_ip, floating_ip_address] }
+      worker1: { get_attr: [worker1_floating_ip, floating_ip_address] }
+      worker2: { get_attr: [worker2_floating_ip, floating_ip_address] }
+
+  node_names:
+    description: Names of all nodes
+    value:
+      - { get_param: master_name }
+      - { get_param: worker1_name }
+      - { get_param: worker2_name }
